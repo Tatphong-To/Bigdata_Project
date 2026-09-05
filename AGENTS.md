@@ -132,6 +132,34 @@ K-Means versioning). Do not reintroduce Parquet files or `mlruns/` — this
 project follows the same Postgres-only pattern as before, not the older
 file-based approach.
 
+## Operational safety rules
+
+The Postgres data (`menu_catalog`, `prediction_log`, `extraction_quota`)
+lives in the named Docker volume `food_model_postgres_data`. It is the
+project's accumulated state and it is **not recoverable** if deleted — the
+catalog took days of quota-limited runs to build.
+
+- **Never run `docker compose down -v`** — or any command that removes a
+  Postgres named volume (`docker volume rm ...`, `docker compose down
+  --volumes`, `docker system prune --volumes`) — **without asking the user
+  first, every time.** On 2026-09-06 an accidental `docker compose down -v`
+  during verification wiped `menu_catalog` (231 rows) and the
+  `extraction_quota` counter permanently; the catalog had to be rebuilt from
+  scratch. To stop containers without touching data, use `docker compose
+  stop` or `docker compose down` (no `-v`).
+- If a volume genuinely must be removed (e.g. a breaking schema change),
+  **stop and ask the user first**, and recommend `pg_dump` backup of
+  `food_db` beforehand. Do not decide this unilaterally.
+- The `extraction_quota` counter must only ever be **seeded to the real
+  value** (from Spoonacular's `X-API-Quota-Used` response header), never
+  reset to 0. Resetting it to 0 would let the extractor pull a fresh 50
+  points on top of what the API has already been charged that day, past the
+  real cap.
+- More generally: any command that is **destructive to already-accumulated
+  data** — dropping/removing a volume, `DROP TABLE`, `TRUNCATE`, `DELETE`
+  without a tight `WHERE`, resetting a counter to 0 instead of seeding it to
+  truth, force-pushing over history — requires stopping and asking first.
+
 ## Documentation obligations — write these in plain language, not a footnote
 
 - **This system does not give medical or clinical dietary advice.** The
@@ -154,6 +182,11 @@ file-based approach.
 
 Merging the safety filter with the ranking step, using an external diet tag
 as a training label, running clustering inside the request path instead of
-Airflow, presenting recommendations as medical advice, or adding a
+Airflow, presenting recommendations as medical advice, adding a
 real user-interaction/rating system (raises data privacy and consent
-questions beyond this project's current scope).
+questions beyond this project's current scope), or running any command that
+is destructive to accumulated data — `docker compose down -v` / removing a
+Postgres named volume, `DROP TABLE`, `TRUNCATE`, unscoped `DELETE`, resetting
+the `extraction_quota` counter to 0 instead of seeding it to the real
+`X-API-Quota-Used`, force-pushing over history (see "Operational safety
+rules").
