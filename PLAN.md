@@ -106,17 +106,28 @@ complete with all unit tests passing.**
 
 ## Phase 2 — Feature engineering
 
-- [ ] Compute, per recipe, from Spoonacular fields only (formulas from the
-      `food-rec-domain` skill):
-      `pct_calories_from_protein = protein_g*4 / total_calories`,
-      `pct_calories_from_carbs = carbs_g*4 / total_calories`,
-      `pct_calories_from_fat = fat_g*9 / total_calories`,
-      `calories_per_serving = total_calories`
-- [ ] Guard against divide-by-zero / missing calories; decide + document how
-      such rows are handled (dropped, not imputed silently)
-- [ ] Explicit assertion / test that no `diet` or `intolerances` tag is present
-      in the clustering feature set
-- [ ] Unit tests on the four formulas with known inputs
+- [x] `food_pipeline/features.py` — `compute_feature_row` computes the four
+      features from Spoonacular fields only, Atwater factors as named
+      constants (4 / 4 / 9). `calories_per_serving = calories` (already per
+      serving — not re-divided by `servings`). **Verified** on the 6 real
+      Phase 1 staging recipes and hand-checked against recipe 634476
+      (P 0.310259 / C 0.127198 / F 0.550187 / cps 478.31).
+- [x] Divide-by-zero / missing-value policy = **drop, never impute**:
+      `compute_feature_row` returns a string reason for calories
+      missing/non-finite/≤0 or any macro missing/non-finite/negative;
+      `build_feature_rows` logs one WARNING per drop and returns
+      `DroppedRow(menu_id, reason)`. Documented in
+      `docs/feature-engineering.md`.
+- [x] No source label reaches K-Means: `assert_feature_row_clean` whitelists
+      keys to `menu_id` + the 4 features and rejects label-looking keys
+      (`diet`, `intoler`, `vegan`, …); `feature_matrix` emits only
+      `FEATURE_COLUMNS` (no `menu_id`). Test feeds a staging row carrying
+      `diet_tags` / `ingredients` / `raw_payload` and asserts none leak;
+      another asserts an injected tag key raises.
+- [x] Unit tests: **22** in `test_features.py` (77 total), incl. all four
+      formulas hand-computed with round-number inputs, per-macro Atwater
+      factor check, real-recipe cross-check, every drop case, and the
+      no-tags guarantees. Full suite green.
 
 ## Phase 3 — Full Airflow DAG
 
