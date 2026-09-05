@@ -1,0 +1,42 @@
+{
+  "results": [
+    {
+      "id": 634476,
+      "title": "Bbq Chicken",
+      "readyInMinutes": 45,
+      "servings": 4,
+      "sourceUrl": "https://www.foodista.com/recipe/4BXYSZ32/bbq-chicken",
+      "vegetarian": false,
+      "vegan": false,
+      "glutenFree": false,
+      "dairyFree": true,
+      "lowFodmap": true,
+      "diets": ["dairy free", "fodmap friendly"],
+      "nutrition": {
+        "nutrients": [
+          { "name": "Calories", "amount": 478.31, "unit": "kcal", "percentOfDailyNeeds": 23.92 },
+          { "name": "Fat", "amount": 29.24, "unit": "g", "percentOfDailyNeeds": 44.98 },
+          { "name": "Saturated Fat", "amount": 8.32, "unit": "g", "percentOfDailyNeeds": 52.01 },
+          { "name": "Carbohydrates", "amount": 15.21, "unit": "g", "percentOfDailyNeeds": 5.07 },
+          { "name": "Net Carbohydrates", "amount": 15.03, "unit": "g", "percentOfDailyNeeds": 5.47 },
+          { "name": "Sugar", "amount": 12.96, "unit": "g", "percentOfDailyNeeds": 14.4 },
+          { "name": "Protein", "amount": 37.1, "unit": "g", "percentOfDailyNeeds": 74.2 },
+          { "name": "Sodium", "amount": 886.82, "unit": "mg", "percentOfDailyNeeds": 38.56 }
+        ],
+        "ingredients": [
+          { "id": 19334, "name": "brown sugar", "amount": 0.75, "unit": "tablespoons" },
+          { "id": 11935, "name": "catsup", "amount": 0.06, "unit": "cup" },
+          { "id": 5006, "name": "chicken pieces", "amount": 0.5, "unit": "" },
+          { "id": 1002046, "name": "dijon mustard", "amount": 0.5, "unit": "teaspoons" },
+          { "id": 16124, "name": "soy sauce", "amount": 0.5, "unit": "tablespoons" },
+          { "id": 6971, "name": "worcestershire sauce", "amount": 0.25, "unit": "teaspoons" }
+        ],
+        "caloricBreakdown": { "percentProtein": 31.41, "percentFat": 55.7, "percentCarbs": 12.89 },
+        "weightPerServing": { "amount": 235, "unit": "g" }
+      }
+    }
+  ],
+  "offset": 0,
+  "number": 1,
+  "totalResults": 100
+}

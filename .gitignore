@@ -1,0 +1,58 @@
+# Secrets / local config
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# Spoonacular / API keys accidentally dropped as files
+*api_key*
+*apikey*
+
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Raw data pulls — keep the folder, not its contents
+data/raw/*
+!data/raw/.gitkeep
+
+# Airflow local runtime
+airflow/logs/
+airflow.cfg
+airflow.db
+standalone_admin_password.txt
+
+# Docker / local infra state
+postgres_data/
+
+# Logs
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# NOT allowed in this project (Postgres-only pattern): fail loudly if they appear
+mlruns/
+*.parquet
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/build/
