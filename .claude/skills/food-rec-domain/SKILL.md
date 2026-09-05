@@ -91,9 +91,66 @@ key is sufficient for this project's scope.
   text, not structured quantities), `strMealThumb`.
 
 **Known limitation:** ingredient amounts are free-text strings (e.g. "1 cup",
-"200g") with inconsistent units — do not attempt automatic nutrition
-computation from this data without treating it as a separate, explicitly
-scoped extension (see CLAUDE.md).
+"200g") with inconsistent units. Nutrition for TheMealDB recipes is estimated
+in the **Phase 2b** pipeline by parsing `strIngredientN`/`strMeasureN`,
+converting each measure to grams, and looking the ingredient up in USDA FDC
+(section 3b). Rows whose units can't be converted, or whose ingredient can't
+be matched with enough confidence, are dropped — never guessed. Any recipe
+built this way carries `nutrition_source = 'usda_estimated'` (vs.
+`'spoonacular_computed'`), per CLAUDE.md.
+
+**Verified response shape (2026-09-05, `search.php?s=`):** top level
+`{"meals": [...]}` or `{"meals": null}`. Meal fields: `idMeal`, `strMeal`,
+`strMealThumb`, `strCategory`, `strArea`, `strInstructions`, `strTags`,
+`strYoutube`, `strSource`, and `strIngredient1..20` / `strMeasure1..20`.
+Unused ingredient slots are `""` **or** `null` (handle both); trailing slots
+are always empty. No calorie/protein/carb/fat field anywhere.
+
+## 3b. USDA FoodData Central (FDC) — ingredient-level nutrition (Phase 2b)
+
+**Use for:** per-ingredient nutrition (per 100 g) to estimate nutrition for
+recipes that have no computed nutrition of their own (TheMealDB). Not used for
+Spoonacular recipes — those already carry computed nutrition.
+
+**Base URL:** `https://api.nal.usda.gov/fdc/v1`
+
+**Auth:** free API key as the `api_key` query param, from
+https://api.data.gov/signup/ . In this project it is read from
+`os.environ["USDA_FDC_API_KEY"]` — **no `DEMO_KEY` fallback**; the client
+raises if the env var is unset (DEMO_KEY is only 30 req/hour / 50 req/day and
+must never be silently substituted).
+
+**Rate limit — VERIFIED 2026-09-05 with the real key** (not a blog figure):
+response headers on a live `/foods/search` call reported
+`X-Ratelimit-Limit: 3600`, `X-Ratelimit-Remaining: 3599`. So the signed-up
+key gets **3600 requests/hour** (rolling hour, per key) — well above the
+commonly-cited "~1000/hour" default and far above DEMO_KEY. No daily-cap
+header is returned; on 429 an api.data.gov `Retry-After` header appears.
+Header names are case-insensitive (`X-Ratelimit-*`).
+
+**Key endpoints:**
+- `GET /foods/search?query={name}&pageSize={n}&dataType={...}&api_key=...`
+  — search foods by name.
+- `GET /food/{fdcId}?api_key=...` — one food's full detail.
+
+**Verified `/foods/search` response shape (2026-09-05):**
+- Top level: `foods[]`, `totalHits`, `currentPage`, `totalPages`, `pageList`,
+  `foodSearchCriteria`, `aggregations`.
+- Each food: `fdcId` (int), `dataType` (one of `Foundation`, `SR Legacy`,
+  `Survey (FNDDS)`, `Branded`), `description`, `foodNutrients[]`; branded rows
+  add `brandOwner`, `servingSize`, `servingSizeUnit`, `ingredients`, etc.
+- `foodNutrients[]` entries:
+  `{nutrientId, nutrientName, nutrientNumber, unitName, value, ...}`. **Values
+  are per 100 g.** Match macros by `nutrientNumber` (stable) + `unitName`:
+  | macro | nutrientNumber | unitName |
+  |---|---|---|
+  | energy (kcal) | `"208"` | `KCAL` (a `KJ` "Energy" row may also exist — take the KCAL one) |
+  | protein | `"203"` | `G` |
+  | total fat | `"204"` | `G` |
+  | carbohydrate, by difference | `"205"` | `G` |
+- **Prefer non-branded data types** (`Foundation` > `SR Legacy` > `Survey` >
+  `Branded`) for generic recipe ingredients — branded entries are specific
+  products and noisier. This preference order is config, not hardcoded.
 
 ## 3. Optional: Open Food Facts
 
