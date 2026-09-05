@@ -180,7 +180,34 @@ complete with all unit tests passing.**
 - [x] `CLAUDE.md` + `AGENTS.md` updated: TheMealDB+USDA approved as a
       nutrition source; mandatory `nutrition_source` column + always-log
       low-confidence matches; safety filter / banned-tag rules unchanged.
-- [ ] Commit Phase 2b modules separately + push.
+- [x] Recipe-level **completeness guard** in `compute_recipe_nutrition.py`:
+      `count_completeness` (matched/total ingredients) + `calorie_completeness`
+      (matched kcal / (matched + guard-estimated missing kcal), non-quantitative
+      skips weighted 0). `CompletenessConfig` — `min_completeness` (config, not
+      hard-coded; **default PROVISIONAL 0.70, awaiting user confirm**), `basis`
+      ("count"/"calorie"/"min", default "min"). Below threshold → row dropped:
+      `pct_calories_from_*` + `calories_per_serving` set to `None`,
+      `complete=False`, `dropped_for_completeness=True`, WARNING logged with
+      recipe id/name/score/rejected ingredients. `summarize_completeness` /
+      `log_completeness_summary` for the batch drop-rate + per-stage skip stats.
+- [x] 6 new tests (172 total, green): high-completeness passes;
+      Teriyaki-like (main ingredient rejected) → dropped, features withheld;
+      threshold is config (lenient keeps / strict drops); basis count vs
+      calorie vs min; non-quantitative skips don't inflate missing kcal;
+      batch summary counts.
+- [x] Live numbers (3 recipes): 35 ingredients, 20 matched → **42.9% skip
+      rate** (14 unit_conversion, 1 match). count/calorie completeness:
+      Teriyaki 0.78/0.89, Pie 0.53/0.81, Salad 0.46/0.69. **Finding:** both
+      metrics rank the biased Teriyaki *highest* (it skipped few-but-critical
+      items) — no threshold catches it without dropping the plausible recipes.
+      Recorded in `docs/phase2b-usda-pipeline.md`.
+- [x] User decision: keep `min_completeness=0.70` **PROVISIONAL** (marker
+      stays in code), basis `"min"`; the real value is chosen in Phase 3
+      alongside the minimum-catalog-size threshold. No macro-anchor heuristic
+      now — the "few-but-critical skip" limitation stays documented as a
+      follow-up.
+- [x] Commit Phase 2b modules separately + push. *(done: `04d7acf`; completeness
+      guard follow-up commit after this)*
 
 ## Phase 3 — Full Airflow DAG
 

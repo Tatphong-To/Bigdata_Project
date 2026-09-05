@@ -51,6 +51,87 @@ servings number: if the caller doesn't supply one, it is left `None` and the
 row is `complete=False` (cannot fully join Phase 3 clustering). **No servings
 count is invented.** Phase 3 decides how to handle incomplete rows.
 
+## Recipe-level completeness guard
+
+Skipped ingredients bias the ratios **systematically**, not as noise: the
+percentage base excludes the macros of whatever was dropped. Live example —
+*Teriyaki Chicken Casserole*: `chicken [2]` (count, no unit) and
+`vegetables [1 (12 oz.)]` (unparseable) are both rejected, leaving rice + soy
+sauce. The result still sums to ~100% (`P11/C88/F5`) and *looks* valid while
+being wrong — the protein/fat anchor is missing from the base.
+
+`compute_recipe_nutrition` computes two completeness sub-metrics per recipe:
+
+| metric | definition |
+|---|---|
+| `count_completeness` | `matched_ingredient_count / total_ingredient_count` |
+| `calorie_completeness` | `matched_calories / (matched_calories + estimated missing calories)` |
+
+Estimated missing calories is a **guard-only heuristic** (never nutrition):
+a skipped ingredient that converted to grams and had USDA candidates is
+weighted by `grams × best-candidate kcal/100 g`; one that converted with no
+candidates by `grams × guard_fallback_kcal_per_g`; one that never converted
+by `guard_fallback_grams_per_unquantified × guard_fallback_kcal_per_g`; a
+non-quantitative measure ("pinch", "to taste") counts as **0**.
+
+`CompletenessConfig`:
+
+- `min_completeness` — the gate. **Config, never hard-coded at a call site**
+  (same rule as `MatchConfig.min_confidence`). Default is **PROVISIONAL**
+  (0.70) pending confirmation against the live numbers below.
+- `basis` — `"count"` | `"calorie"` | `"min"` (default `"min"`: strict on
+  both axes).
+- `guard_fallback_kcal_per_g` (2.0), `guard_fallback_grams_per_unquantified`
+  (100.0).
+
+**Below threshold → the row is dropped**, not flagged: `pct_calories_from_*`
+and `calories_per_serving` are set to `None`, `complete=False`,
+`dropped_for_completeness=True`, and a WARNING is logged naming the recipe,
+the score, and every rejected ingredient with its reason. Totals
+(`total_calories` etc.) are kept for diagnostics but are not clustering
+features. Consistent with CLAUDE.md's "dropped, not guessed".
+
+`summarize_completeness(results)` / `log_completeness_summary(results)` give
+the batch picture: recipes passed vs dropped-for-completeness vs
+no-usable-ingredients, and ingredient-level matched/skipped counts by stage.
+
+### Live skip-rate numbers (3 verification recipes, 2026-09-06)
+
+Ingredient level: **35 ingredients total, 20 matched → 42.9% skip rate.**
+Skips by stage: 14 `unit_conversion` (mostly "1 chopped", "3 sprigs",
+"1 clove ...", "pinch", "Juice of 1/2"), 1 `ingredient_match`.
+
+Per recipe:
+
+| recipe | matched / total | `count_completeness` | `calorie_completeness` | gate (`min`) | resulting P/C/F |
+|---|---|---|---|---|---|
+| Teriyaki Chicken Casserole | 7 / 9 | 0.778 | 0.885 | **0.778** | 11 / 88 / 5 *(biased — chicken skipped)* |
+| Beef and Mustard Pie | 8 / 15 | 0.533 | 0.811 | **0.533** | 24 / 25 / 49 *(plausible)* |
+| Chicken Quinoa Greek Salad | 5 / 11 | 0.455 | 0.687 | **0.455** | 23 / 31 / 48 *(plausible)* |
+
+Drop behaviour by threshold (`min` basis):
+
+| `min_completeness` | recipes dropped (of 3) |
+|---|---|
+| 0.5 | 1 — Salad |
+| 0.6 – 0.7 | 2 — Pie, Salad |
+| 0.8 – 0.9 | 3 — all |
+
+**Known limitation of the metric.** Both sub-metrics rank the *actually
+biased* Teriyaki recipe (0.78 / 0.89) **above** the two plausible ones,
+because Teriyaki skipped few-but-critical ingredients (the chicken) while Pie
+and Salad skipped many minor herbs/spices. No count/calorie threshold catches
+Teriyaki without also dropping the plausible recipes. Catching the
+"skipped a macro anchor" pattern specifically would need a further heuristic
+(e.g. flag when a skipped ingredient name looks like a primary protein/fat
+source) — not implemented; noted for a follow-up.
+
+**For Phase 3:** at a ~43% ingredient skip rate, a strict completeness gate
+(~0.8) drops the large majority of TheMealDB recipes; a lenient one (~0.5)
+keeps recipes whose ingredient coverage is under half. Either way the
+`usda_estimated` catalog grows slowly — feed this into the Phase 3
+minimum-catalog-size threshold for the first K-Means run.
+
 ## `nutrition_source` (mandatory)
 
 Every `menu_catalog` row carries `nutrition_source`
