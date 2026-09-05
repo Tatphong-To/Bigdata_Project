@@ -61,7 +61,10 @@ def _now_iso() -> str:
 def food_rec_offline_pipeline():
     @task(task_id="extract_menus")
     def extract_menus() -> str:
-        return dag_tasks.extract_menus(run_dir=_run_dir())
+        # Spoonacular-only for the daily run: it alone grows the catalog toward
+        # the stable gate and avoids mixing in usda_estimated noise. The
+        # TheMealDB -> USDA path (Phase 2b) stays available for opt-in use.
+        return dag_tasks.extract_menus(run_dir=_run_dir(), include_themealdb_usda=False)
 
     @task(task_id="validate_nutrition_data")
     def validate_nutrition_data(in_path: str) -> str:

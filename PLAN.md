@@ -255,21 +255,47 @@ complete with all unit tests passing.**
       (`kmeans-…-provisional`, inertia 271.7, silhouette 0.29), 231 rows
       labelled + written, `model_provisional=true`. `menu_catalog` now 231
       rows, all `spoonacular_computed`, all clustered.
+- [x] Decision: **Spoonacular is the primary source.** 231 rows already clears
+      the 150 gate + the 120-recipe requirement with zero `usda_estimated`
+      noise. The daily DAG run now pulls Spoonacular only
+      (`extract_menus(..., include_themealdb_usda=False)` in the DAG wrapper)
+      and lets `@daily` accumulate toward "stable" (500+). The Phase 2b
+      TheMealDB→USDA path is kept (still default-on in `dag_tasks.extract_menus`
+      for opt-in use), just no longer a growth target. Recorded in
+      `docs/phase3-airflow-dag.md`.
 
 ## Phase 4 — Safety filter module  *(gate before Phase 5)*
 
-- [ ] Standalone module (no import of any ML / clustering / ranking code),
-      pure rule-based matching against ingredient text + known allergen fields
-- [ ] Handles: named allergies (nut, shellfish, dairy, egg, soy, gluten/wheat,
-      fish, sesame…), "no pork" / no-beef style exclusions, and diet types
-      (vegan, vegetarian, pescatarian, halal, kosher where determinable)
-- [ ] Returns filtered candidates **and** the excluded count/list; excludes
-      zero when restrictions are empty (never skips the step)
-- [ ] Unit tests covering multiple allergy/diet combos, empty restrictions,
-      compound-ingredient near-misses, and case/wording vari. **All passing.**
-- [ ] `docs/` note restating the limitation: matches on text/known fields, can
-      miss unusual wording or hidden compound ingredients — users with serious
-      allergies must still verify themselves
+- [x] `food_pipeline/safety_filter.py` — standalone, imports only
+      `logging`/`re`/`dataclasses`/`typing`/`__future__` (nothing from
+      `food_pipeline`, no ML/clustering/ranking). An AST test
+      (`test_module_has_no_ml_or_pipeline_imports`) enforces it. Pure keyword
+      matching over ingredient text + API `diet_tags`.
+- [x] Handles named allergies **nut, shellfish, dairy, egg, soy, gluten/wheat,
+      fish, sesame** (curated keyword + suppressor lists); avoidances
+      **pork, beef, poultry, alcohol, gelatin, honey** incl. "no pork"/"no beef"
+      wording; diets **vegan, vegetarian, pescatarian, halal, kosher**. API
+      tags only *clear* a diet, never prove a violation; halal/kosher always
+      log a partial-determination note; unknown allergen → literal match +
+      log; unknown diet → "cannot determine" + log (no guess).
+- [x] `apply_safety_filter` returns `SafetyResult(kept, excluded[Exclusion
+      (menu_id,name,rule,reason)], undetermined, excluded_count)`. Empty
+      restrictions → `excluded_count == 0`, all kept, and it still logs
+      `"filter still ran"` (never skipped). Concrete ingredient match excludes
+      even when a "free-from" tag says otherwise; no ingredient data →
+      `unverifiable:<key>` exclusion for allergy/avoid, `undetermined` (kept) +
+      log for diet.
+- [x] **34 unit tests, all passing** — each named allergen; no-pork/no-beef;
+      every diet; `vegan + nut allergy` combined; tag-clears-diet-not-allergen;
+      case/wording variants (`peanut`/`Peanuts`/`PEANUT`/`groundnut`/
+      `Ground Nuts`/`tree nut`); suppressors (coconut milk, nutmeg, almond
+      flour, buckwheat, eggplant); compound-ingredient catches **and** the
+      documented misses; unverifiable path; empty restrictions.
+- [x] `docs/phase4-safety-filter.md` — decision order, keyword tables, and the
+      CLAUDE.md limitation stated plainly (text/known-field matching only, can
+      miss unusual wording / compound ingredients; serious-allergy users must
+      verify ingredients themselves; not a sole safeguard), with the concrete
+      caught-vs-missed examples from the tests.
 
 ## Phase 5 — FastAPI model service  *(only after Phase 4 done + tests green)*
 

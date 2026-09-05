@@ -143,12 +143,18 @@ def extract_menus(
     themealdb_client: Any | None = None,
     usda_client: Any | None = None,
 ) -> str:
-    """Pull recipes from Spoonacular (quota-paced, persisted counter) and, for
-    variety beyond the daily quota, TheMealDB recipes with USDA-estimated
-    nutrition that pass the Phase 2b completeness guard.
+    """Pull recipes for the catalog.
 
-    ``dropped_for_completeness`` rows are excluded here — they never reach
-    compute_nutrition_ratios.
+    **Spoonacular is the primary source** — quota-paced against the persisted
+    daily point budget (~50 pts/day). The daily DAG run relies on this alone
+    to grow the ``spoonacular_computed`` catalog toward the "stable" gate
+    (500+); the first real run already produced 231 rows, past the 150 gate.
+
+    TheMealDB -> USDA is a **secondary supplement**, kept for later use, not a
+    growth target. The Phase 2b code path is unchanged and still available
+    (``include_themealdb_usda=True``); the daily DAG wrapper leaves it off.
+    When enabled it only contributes rows that pass the completeness guard —
+    ``dropped_for_completeness`` rows never reach compute_nutrition_ratios.
     """
     env = env or dict(os.environ)
     rows: list[dict[str, Any]] = []

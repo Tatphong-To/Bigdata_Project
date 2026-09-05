@@ -39,6 +39,23 @@ not a bulk load: `extract_menus` respects the persisted Spoonacular point
 budget (`food_db.extraction_quota`), so each run pulls a small batch and the
 catalog grows over time. Interval can be tuned later.
 
+## Source priority — Spoonacular-primary
+
+The first real run produced **231 rows from Spoonacular alone** (12 queries,
+26.4 of 50 points) and **0 from TheMealDB→USDA** — all 7 TheMealDB recipes
+tried were dropped by the Phase 2b completeness guard (a primary ingredient
+un-quantifiable in each). 231 already clears both the 150-row gate and the
+course's 120-recipe requirement.
+
+Decision: **Spoonacular is the primary source going forward.** The daily
+`@daily` DAG run pulls Spoonacular only (`extract_menus(..., include_themealdb_usda=False)`
+in the DAG wrapper) and lets the catalog accumulate toward the "stable" gate
+(500+) over successive runs. This keeps the catalog free of `usda_estimated`
+noise. The TheMealDB→USDA path (Phase 2b) is **not removed** — the code still
+works and `dag_tasks.extract_menus` still includes it by default for manual /
+opt-in use; it is just no longer a growth target, and the TheMealDB
+completeness issue does not need fixing now.
+
 ## Minimum-catalog-size gate (`train_or_update_kmeans`)
 
 Counts total distinct rows = existing `menu_catalog` rows **+** this run's
