@@ -15,9 +15,18 @@ CREATE TABLE IF NOT EXISTS menu_catalog (
     name                       TEXT NOT NULL,
     servings                   NUMERIC CHECK (servings IS NULL OR servings > 0),
 
-    -- Computed per-serving nutrition from Spoonacular. Physical-plausibility
-    -- checks are also enforced in the Airflow validate step; these are a
-    -- last-line guard at the storage layer.
+    -- How this row's nutrition was obtained (CLAUDE.md Phase 2b — mandatory,
+    -- never NULL). 'spoonacular_computed' = the primary path (source API's own
+    -- computed nutrition). 'usda_estimated' = TheMealDB recipe whose nutrition
+    -- was estimated by parsing measures -> grams -> USDA FDC lookup.
+    nutrition_source           TEXT NOT NULL DEFAULT 'spoonacular_computed'
+        CHECK (nutrition_source IN ('spoonacular_computed', 'usda_estimated')),
+
+    -- Computed per-serving nutrition. For 'spoonacular_computed' these come
+    -- from Spoonacular; for 'usda_estimated' they are summed from matched
+    -- ingredients (per 100 g) and divided by servings. Physical-plausibility
+    -- checks also run in the Airflow validate step; these are a last-line
+    -- guard at the storage layer.
     calories                   NUMERIC NOT NULL CHECK (calories >= 0),
     protein_g                  NUMERIC NOT NULL CHECK (protein_g >= 0),
     carbs_g                    NUMERIC NOT NULL CHECK (carbs_g   >= 0),
@@ -49,6 +58,7 @@ CREATE TABLE IF NOT EXISTS menu_catalog (
 
 CREATE INDEX IF NOT EXISTS idx_menu_catalog_cluster_id ON menu_catalog (cluster_id);
 CREATE INDEX IF NOT EXISTS idx_menu_catalog_model_version ON menu_catalog (model_version);
+CREATE INDEX IF NOT EXISTS idx_menu_catalog_nutrition_source ON menu_catalog (nutrition_source);
 
 -- ---------------------------------------------------------------------------
 -- prediction_log: one row per /recommend call, for system-quality monitoring.

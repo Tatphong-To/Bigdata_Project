@@ -129,6 +129,59 @@ complete with all unit tests passing.**
       factor check, real-recipe cross-check, every drop case, and the
       no-tags guarantees. Full suite green.
 
+## Phase 2b — TheMealDB + USDA supplementary nutrition source
+
+*(added after the original plan; do before Phase 3)*
+
+- [x] USDA FoodData Central key registered; in `.env` as `USDA_FDC_API_KEY`
+      (`.env.example` placeholder added). Rate limit **verified with the real
+      key**: `X-Ratelimit-Limit: 3600`/hour (not the ~1000 blog figure).
+      `food-rec-domain` SKILL.md section 3b written with verified schema.
+      Committed + pushed as `28359be`.
+- [x] `themealdb.py` — client (test key `1`, light retry for the flaky host)
+      + `parse_meal`: `strIngredientN`/`strMeasureN` → `(name, quantity_text)`
+      pairs, handles `""`/`null` slots, tags parsing.
+- [x] `usda_client.py` — `/foods/search`; key from
+      `os.environ["USDA_FDC_API_KEY"]`, **raises if unset — no DEMO_KEY
+      fallback**. Macros per 100 g by `nutrientNumber` 208/203/204/205 +
+      `unitName`; prefers `Foundation`/`SR Legacy` over `Branded`. Retries
+      transient 400/5xx/timeout (api.data.gov edge is flaky), surfaces 429.
+- [x] `ingredient_matcher.py` — `difflib` + token-Jaccard fuzzy score in
+      [0,1]. Threshold is **`MatchConfig.min_confidence` (config, not
+      hard-coded)**. Below threshold → dropped + WARNING logged; accepted but
+      borderline → INFO logged. `require_all_macros` filters candidates.
+- [x] `unit_converter.py` — explicit supported units (mass exact; volume via
+      configurable `g_per_ml` default 1.0 + optional per-ingredient density).
+      Non-quantitative / count-based / unknown-unit measures → **rejected with
+      a reason, never estimated**. Fractions + unicode fractions handled.
+- [x] `compute_recipe_nutrition.py` — orchestrates convert → search → match →
+      sum. `pct_calories_from_*` via `features.compute_feature_row` (identical
+      formula). Tags `nutrition_source='usda_estimated'`. Per-stage skips
+      recorded + logged. No servings count invented (`calories_per_serving`
+      None → `complete=False`).
+- [x] Unit tests for every new module — `test_unit_converter` (45),
+      `test_themealdb`, `test_usda_client` (incl. retry/timeout/429),
+      `test_ingredient_matcher` (clear / ambiguous+logged / no-match+logged /
+      threshold-is-config), `test_compute_recipe_nutrition` (hand-computed
+      totals, per-stage skips, no-servings, no-ingredients). **166 total, green.**
+- [x] Verified with 3 real TheMealDB recipes (live TheMealDB + live USDA):
+      *Beef and Mustard Pie* ≈ 956 kcal/serving, P24/C24/F50% — plausible for
+      a beef + puff-pastry pie; *Chicken Quinoa Greek Salad* ≈ 548
+      kcal/serving, P23/C31/F48% — plausible. *Teriyaki Chicken Casserole*
+      resolved only the sauce + rice (chicken `[2]` and veg `[1 (12 oz.)]`
+      correctly rejected as non-convertible) so its number reflects that
+      subset. pct sums 97–104% (rounding/fibre). Confidence scoring behaved
+      (exact→1.00, "red wine"→"Wine, red" 0.95, "feta"→"Cheese, feta" 0.57
+      logged, "plain flour"→pretzel 0.25 rejected+logged). Skip rate is real
+      and by design (non-quantitative measures dropped, not guessed) plus some
+      transient api.data.gov 400s that outlasted retries that run.
+- [x] `nutrition_source` column added to `menu_catalog`
+      (`spoonacular_computed` | `usda_estimated`, NOT NULL, CHECK, indexed).
+- [x] `CLAUDE.md` + `AGENTS.md` updated: TheMealDB+USDA approved as a
+      nutrition source; mandatory `nutrition_source` column + always-log
+      low-confidence matches; safety filter / banned-tag rules unchanged.
+- [ ] Commit Phase 2b modules separately + push.
+
 ## Phase 3 — Full Airflow DAG
 
 - [ ] DAG tasks in the exact `CLAUDE.md` order:

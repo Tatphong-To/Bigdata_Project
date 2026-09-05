@@ -47,14 +47,40 @@ belongs in the Airflow DAG instead.
   reason the Airflow DAG needs to run as a recurring job rather than a
   one-time bulk load. Use it for recipes with computed nutrition data
   (calories, protein, carbs, fat per serving) and diet/allergen metadata.
-- **Secondary/optional: TheMealDB.** Free, no key needed. Has recipes and
-  ingredient lists but NOT computed nutrition values — do not attempt to
-  compute nutrition ratios from TheMealDB's raw ingredient text unless
-  explicitly asked to build that as an extension; ingredient-quantity
-  parsing and unit conversion is error-prone and out of scope by default.
+- **Secondary: TheMealDB.** Free, test key `1`, no registration. Has recipes
+  and ingredient lists but NOT computed nutrition values. As of **Phase 2b**
+  this extension is approved: nutrition for TheMealDB recipes IS estimated,
+  by parsing `strIngredientN`/`strMeasureN`, converting each measure to grams
+  (`unit_converter`), and looking each ingredient up in USDA FDC. This
+  supplements the catalog beyond Spoonacular's daily quota. It is an
+  *estimate* and is governed by the mandatory rules below.
+- **Secondary (Phase 2b): USDA FoodData Central.** Free API key from
+  api.data.gov, read from `USDA_FDC_API_KEY` (no `DEMO_KEY` fallback).
+  Per-ingredient nutrition per 100 g, used only to estimate nutrition for
+  sources that lack their own (TheMealDB). Not used for Spoonacular recipes.
 - **Optional: Open Food Facts.** Free, no key. Packaged-food nutrition by
   barcode — useful only if a future feature needs packaged-product lookup,
   not part of the default recipe pipeline.
+
+### Mandatory rules for estimated (non-primary) nutrition — Phase 2b
+
+These are non-negotiable, same status as the rest of this file:
+
+1. **`nutrition_source` column is required on every menu_catalog row.**
+   `'spoonacular_computed'` for the primary path, `'usda_estimated'` for the
+   TheMealDB→USDA path. It is never optional or dropped — downstream code and
+   any user-facing surface must be able to tell estimated nutrition apart
+   from source-computed nutrition.
+2. **Low-confidence ingredient matches are always logged.** The USDA
+   ingredient match uses a fuzzy score with a **configurable** threshold
+   (never hard-coded at a call site). A match below the threshold is
+   **dropped, not guessed**, and logged. A match accepted but near the
+   threshold is also logged. Same for measures whose units can't be
+   converted — dropped and logged, never estimated.
+3. Estimated-nutrition recipes still obey every other rule here: the safety
+   filter (stage 1) is unchanged and still rule-based; diet/allergy tags are
+   still banned as clustering features; the `pct_calories_from_*` formulas
+   are the same as the primary path.
 
 ## Feature engineering (Layer B clustering)
 
