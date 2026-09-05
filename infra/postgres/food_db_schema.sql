@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS menu_catalog (
     -- Layer B output. NULL until a K-Means run assigns them.
     cluster_id                 INTEGER,
     model_version              TEXT,
+    -- true when the K-Means model was trained on a catalog of 150-499 rows
+    -- (Phase 3 gate): usable but not yet stable. Downstream (Phase 5) may
+    -- surface this. false once trained on >= 500 rows.
+    model_provisional          BOOLEAN NOT NULL DEFAULT false,
 
     raw_payload                JSONB,                       -- original API response for traceability
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),

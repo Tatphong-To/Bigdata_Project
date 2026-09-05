@@ -5,17 +5,19 @@ httpx>=0.27,<0.28
 tenacity>=8.5,<9            # retry/backoff for API calls within the rate limit
 psycopg[binary]>=3.2,<4     # Postgres driver for pipeline + service
 SQLAlchemy>=2.0,<2.1
-pandas>=2.2,<2.3
-numpy>=1.26,<2.2
+pandas>=2.2
+numpy>=1.26
 
 # --- ML (Phase 3 / Layer B, Airflow only) ---
-scikit-learn>=1.5,<1.6      # K-Means — trained in Airflow, never in the request path
-mlflow>=2.17,<2.18          # experiment tracking, Postgres backend store
+scikit-learn>=1.5          # K-Means — trained in Airflow, never in the request path
+mlflow>=2.17,<3            # experiment tracking, mlflow_db backend (Phase 7 wiring TODO)
 
 # --- Airflow (Phase 3) ---
-# Airflow itself is provided by the apache/airflow image in docker-compose.
-# Install locally only for DAG unit tests / parse checks:
-apache-airflow==2.10.3
+# Airflow runs from the apache/airflow:2.10.3 image in docker-compose. It
+# requires Python < 3.13, so it is NOT installed in a 3.13 dev venv; the DAG
+# *logic* is tested via food_pipeline.dag_tasks (stdlib-only) and the real
+# DagBag parse is checked in the container (see docs/phase3-airflow-dag.md).
+apache-airflow==2.10.3 ; python_version < "3.13"
 
 # --- Model Service (Phase 5) ---
 fastapi[standard]>=0.115,<0.116

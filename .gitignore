@@ -30,6 +30,10 @@ htmlcov/
 data/raw/*
 !data/raw/.gitkeep
 
+# Airflow pipeline run artifacts (numbered JSON per run, model pickles)
+data/pipeline_runs/
+data/models/
+
 # Airflow local runtime
 airflow/logs/
 airflow.cfg

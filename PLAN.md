@@ -211,21 +211,50 @@ complete with all unit tests passing.**
 
 ## Phase 3 — Full Airflow DAG
 
-- [ ] DAG tasks in the exact `CLAUDE.md` order:
+- [x] DAG `food_rec_offline_pipeline` (`airflow/dags/food_rec_pipeline_dag.py`),
+      logic in `food_pipeline/dag_tasks.py`. Tasks in the exact CLAUDE.md order:
       `extract_menus` → `validate_nutrition_data` → `clean` →
       `compute_nutrition_ratios` → `train_or_update_kmeans` →
-      `assign_cluster_labels` → `write_to_menu_catalog` (Postgres)
-- [ ] Minimum-catalog-size threshold before the first `train_or_update_kmeans`
-      run (e.g. do not train with fewer than 100 recipes in the catalog). Below
-      the threshold, the DAG skips this task (and the downstream cluster steps)
-      with an explicit log line stating the current count and why it skipped
-- [ ] `extract_menus` respects the persisted quota; DAG scheduled as a
-      recurring job (not a one-time bulk load)
-- [ ] `train_or_update_kmeans` runs K-Means **only here**; grep/verify no
-      clustering code exists in the FastAPI request path
-- [ ] `write_to_menu_catalog` writes `cluster_id` + `model_version` per item
-- [ ] DAG parse test + task-level unit tests (mock the API); document a runbook
-      in `docs/`
+      `assign_cluster_labels` → `write_to_menu_catalog`. **Verified in a real
+      `apache/airflow:2.10.3` container**: parses with `import_errors == {}`,
+      all 7 task ids, linear edges intact, `schedule=@daily`,
+      `write` `trigger_rule=none_failed`.
+- [x] Minimum-catalog-size gate in `train_or_update_kmeans` (constants in
+      `clustering.py`): **< 150** → skip train + assign, WARNING logged
+      (`"catalog has N rows, minimum 150 required…"`), `05_skip.json` written,
+      `write` still persists rows without a cluster; **150–499** → train,
+      `model_version` gets `-provisional`, `menu_catalog.model_provisional=true`;
+      **≥ 500** → stable. Counts `spoonacular_computed` + `usda_estimated`
+      together, deduped by `menu_id` (no source-mix control — documented
+      limitation).
+- [x] `extract_menus` calls Phase 1 `run_extraction` (Spoonacular, persisted
+      point budget) + Phase 2b `compute_recipe_nutrition` (TheMealDB→USDA,
+      completeness guard; `dropped_for_completeness` rows never pass). DAG
+      `schedule=@daily`, `catchup=False`, `max_active_runs=1` — recurring job.
+- [x] K-Means runs **only** in `train_or_update_kmeans`. `clustering.py` is the
+      sole `sklearn` importer (lazy, inside functions) and is imported **only**
+      by `dag_tasks.py`. Grep over `airflow/`, `model_service/`, `frontend/`
+      confirms no clustering code near any request path.
+- [x] `write_to_menu_catalog` upserts `cluster_id`, `model_version`,
+      `model_provisional` (+ nutrition, ratios, `nutrition_source`) per row.
+- [x] MLflow params/metrics via `mlflow_tracking` with a JSON fallback when
+      `MLFLOW_TRACKING_URI` is unset (`TODO(Phase 7)` for full `mlflow_db`).
+- [x] Tests: **+24** (196 pass, 1 skipped) — `test_clustering` (gate
+      boundaries + real fit/predict), `test_dag_tasks` (every step with fakes,
+      all 3 gate outcomes, full extract→…→write skip-path chain),
+      `test_dag_structure` (`TASK_SEQUENCE` == CLAUDE.md order; real DagBag
+      parse skipped locally / run in container). 172 prior tests still green.
+- [x] `docs/phase3-airflow-dag.md` — DAG, gate (150/500 + rationale), MLflow,
+      and 4 named deadline-scope limitations (source-mix, partial re-assign,
+      assumed servings, XCom-paths).
+- [x] **First real run** (live Spoonacular + TheMealDB + USDA + local
+      Postgres): `extract_menus` → **231 rows** (Spoonacular 12 queries ×20
+      deduped; 26.40 points spent of 50, persisted counter `2026-09-06`;
+      TheMealDB→USDA 0 kept / 7 dropped for completeness). Gate fired =
+      **provisional** (231 in 150–499). K-Means k=6 trained
+      (`kmeans-…-provisional`, inertia 271.7, silhouette 0.29), 231 rows
+      labelled + written, `model_provisional=true`. `menu_catalog` now 231
+      rows, all `spoonacular_computed`, all clustered.
 
 ## Phase 4 — Safety filter module  *(gate before Phase 5)*
 
