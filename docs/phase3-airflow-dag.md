@@ -138,3 +138,43 @@ docker run --rm -v "$PWD/airflow/dags:/opt/airflow/dags:ro" \
   apache/airflow:2.10.3-python3.12 \
   python -c "from airflow.models import DagBag; b=DagBag('/opt/airflow/dags', include_examples=False); print(b.import_errors or 'OK'); print(list(b.get_dag('food_rec_offline_pipeline').task_ids))"
 ```
+
+## Operational notes
+
+### ⚠️ `docker compose down -v` destroys the catalog and the quota counter
+
+`food_db` (menu_catalog, prediction_log, **extraction_quota**) lives in the
+`food_model_postgres_data` volume. `docker compose down -v` deletes that
+volume — the whole catalog and the persisted Spoonacular point counter go
+with it. This happened once (a Phase 3 verification teardown wiped 231 rows
+and the day's counter).
+
+To stop the stack without data loss use `docker compose stop` (or
+`docker compose down` **without** `-v`). Only use `-v` when you deliberately
+want a clean slate.
+
+**Recovering the quota counter after an accidental wipe:** do NOT reset
+`extraction_quota` to 0 — that would let the tracker pull a fresh 50 points
+on top of what the Spoonacular server has already been charged today, past
+the real cap. Instead read the true usage from a live response header
+(`X-API-Quota-Used` on any call) and seed the row to that value:
+
+```sql
+INSERT INTO extraction_quota (quota_date, points_used, request_count, last_call_at, updated_at)
+VALUES (CURRENT_DATE, <X-API-Quota-Used>, <best estimate>, now(), now())
+ON CONFLICT (quota_date) DO UPDATE
+  SET points_used = EXCLUDED.points_used, updated_at = now();
+```
+
+`request_count` is bookkeeping only — an estimate + a note is fine;
+`points_used` must match the header so the 50/day cap still enforces.
+This was done on 2026-09-06 (seeded to 35.28; a follow-up run then spent
+13.20 more and the tracker stopped itself at 48.48/50 before the next call
+would have exceeded).
+
+### Schedule is `@daily` but triggered manually
+
+The DAG carries `schedule=@daily`, but in practice the operator triggers each
+run by hand (`airflow dags trigger food_rec_offline_pipeline`) on the days
+they want to grow the catalog. No extra automation is set up to fire it
+unattended.
