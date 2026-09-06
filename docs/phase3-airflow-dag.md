@@ -177,4 +177,51 @@ would have exceeded).
 The DAG carries `schedule=@daily`, but in practice the operator triggers each
 run by hand (`airflow dags trigger food_rec_offline_pipeline`) on the days
 they want to grow the catalog. No extra automation is set up to fire it
-unattended.
+unattended. Note: **the first time the DAG is unpaused**, Airflow fires one
+scheduled run for the most recent complete `@daily` interval
+(`catchup=False`, so only one) — so an unpause immediately before a manual
+trigger produces two successful runs.
+
+### Full-stack boot time (`docker compose up -d`)
+
+Measured 2026-09-06 on the dev machine, cold (mlflow image not yet pulled):
+
+| milestone | elapsed |
+|---|---|
+| `docker compose up -d` issued | 0:00 |
+| `mlflow` healthy | ~2:30 |
+| `airflow-webserver` healthy, UI reachable at :8080 | **~7:00** |
+| scheduler processing DAGs / able to run tasks | ~7:00 |
+
+The airflow containers run `pip install` for
+`_PIP_ADDITIONAL_REQUIREMENTS` (scikit-learn, numpy, psycopg, mlflow) on
+every start, which is the bulk of that time. **Bring the stack up at least
+10 minutes before a presentation.** Subsequent `up`/restarts with the image
+layers cached are faster (~3–4 min) but still not instant.
+
+Once the catalog is ≥ 150 rows, every trigger yields a full green run even
+if Spoonacular quota is exhausted — `extract_menus` just contributes 0 new
+rows and `train_or_update_kmeans` trains on the existing catalog. So repeated
+rehearsal triggers are safe.
+
+### Airflow must not parse `food_pipeline/` as DAGs
+
+`airflow/dags/.airflowignore` lists `food_pipeline/`. Without it, Airflow's
+DagBag imports each helper module standalone and reports
+`ImportError: attempted relative import with no known parent package` (the
+modules use package-relative imports and are only meant to be reached via
+`food_pipeline.*`, which the DAG file does). The real DAG still registers,
+but the UI shows spurious import errors.
+
+### MLflow
+
+With `MLFLOW_TRACKING_URI=http://mlflow:5000` set on the airflow services
+(done in `docker-compose.yml`), `train_or_update_kmeans` logs the run to the
+MLflow server — visible at http://localhost:5000 under experiment
+`food_rec_kmeans` with params (`k`, `seed`, `features`, `gate`,
+`catalog_row_count`, …) and metrics (`inertia`, `silhouette`). The mlflow
+**3.x client** (installed via `_PIP_ADDITIONAL_REQUIREMENTS`) logs fine to
+the **2.17 server** image. If the server is unreachable at task time,
+`mlflow_tracking` falls back to
+`data/pipeline_runs/<run_id>/models/<model_version>.mlflow-fallback.json`.
+Full MLflow wiring (registry, retrain triggers) is still Phase 7.

@@ -1,0 +1,4 @@
+# Not DAG files — importable support package for the pipeline tasks.
+# Airflow parses each .py under dags/ standalone; food_pipeline/ modules use
+# package-relative imports and must only be imported via `food_pipeline.*`.
+food_pipeline/

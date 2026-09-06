@@ -15,6 +15,16 @@ x-airflow-common: &airflow-common
     # Daily quota in POINTS (not requests). Conservative default until the
     # account console value is confirmed — see docs/spoonacular-quota.md
     SPOONACULAR_DAILY_POINT_QUOTA: ${SPOONACULAR_DAILY_POINT_QUOTA:-50}
+    USDA_FDC_API_KEY: ${USDA_FDC_API_KEY:-}
+    # MLflow tracking server (started by the `mlflow` service below). If it is
+    # not reachable when a task runs, mlflow_tracking falls back to a JSON file.
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    MLFLOW_EXPERIMENT: food_rec_kmeans
+    # The base airflow image has no scikit-learn / numpy / psycopg / mlflow.
+    # dag_tasks + clustering import them lazily at task runtime, so install
+    # them on container start. (Dev convenience — for production build a custom
+    # image. This makes the first boot noticeably slower.)
+    _PIP_ADDITIONAL_REQUIREMENTS: "scikit-learn>=1.5 numpy>=1.26 psycopg[binary]>=3.2 mlflow>=2.17"
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./model_service:/opt/airflow/model_service
@@ -106,6 +116,12 @@ services:
       - "5000:5000"
     volumes:
       - mlflow_artifacts:/mlflow/artifacts
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
