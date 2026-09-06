@@ -12,6 +12,7 @@ Needs FOOD_DB_DSN or AIRFLOW_CONN_FOOD_DB in the environment.
 from __future__ import annotations
 
 import logging
+import pathlib
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
@@ -81,3 +82,13 @@ def recommend(request: RecommendRequest, catalog: CatalogDep) -> RecommendRespon
     while the catalog is in the 150-499 row band. Not medical advice — see
     the `disclaimer` field on the response."""
     return run_recommend(request, catalog)
+
+
+# --- serve the Phase 6 demo frontend from the same origin (no CORS needed) --
+# Serving-only; no request/pipeline logic here. Optional — skipped if the
+# folder is absent (e.g. running the service without the repo checkout).
+_FRONTEND_DIR = pathlib.Path(__file__).resolve().parents[1] / "frontend"
+if _FRONTEND_DIR.is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/ui", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="ui")

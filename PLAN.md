@@ -351,11 +351,39 @@ complete with all unit tests passing.**
 
 ## Phase 6 — Frontend
 
-- [ ] Form: user profile + dietary restrictions
-- [ ] Results view: daily target, recommended menus, **count filtered out**,
-      and a clearly visible medical disclaimer
-- [ ] Cluster groupings, if shown, labelled as exploratory — not clinical
-- [ ] Calls the FastAPI service; handles the empty-recommendations case
+- [x] Single self-contained page `frontend/index.html` (no build step,
+      inline CSS/JS, `fetch`). Served same-origin by the Model Service at
+      `/ui/` via a `StaticFiles` mount (serving-only add to `main.py`, no
+      pipeline/handler logic touched) — so one `uvicorn` command runs form +
+      API, no CORS. A "Model Service base URL" box allows standalone serving.
+- [x] Form: age, sex (`male`/`female`), weight_kg, height_cm, activity_level
+      (`sedentary`/`light`/`moderate`/`active`/`very_active`), goal
+      (`lose`/`maintain`/`gain`) — dropdown values match
+      `model_service/schemas.py` exactly. Allergy checkboxes `nut / shellfish
+      / dairy / egg / soy / gluten / fish / sesame` (match `safety_filter.py`
+      `_ALLERGENS`), diet dropdown `none / vegan / vegetarian / pescatarian /
+      halal / kosher`. Basic client-side checks (age 1–120, weight/height
+      positive); backend 422 still handles the rest.
+- [x] Calls `POST /recommend` for real (no mock). Renders `daily_target`
+      (calories / P / C / F tiles), recommendation cards (name, `menu_id`,
+      `match_score`, per-serving nutrition), a prominent **`excluded_count`**
+      banner ("N menu items filtered out because of your restrictions"), and
+      `model_version`.
+- [x] When `model_version` contains `provisional` → an amber badge "clusters
+      still under development — exploratory, not clinical".
+- [x] Medical disclaimer shown permanently at the bottom of the page (not a
+      tooltip); replaced with the exact `disclaimer` string from the response
+      after a call.
+- [x] Empty `recommendations[]` → a plain "no menu items match this profile
+      and restriction set" message; HTTP / non-JSON / validation errors shown
+      inline, never a hang.
+- [x] **Live-verified** through the page against the real 335-row catalog —
+      the 3 Phase 5 cases return byte-identical numbers:
+      no-restrictions → 2759 kcal / excluded 0 / provisional badge;
+      nut+shellfish → 1889 kcal / excluded 86 / no shrimp-peanut;
+      vegetarian → 2312 kcal / excluded 202 / meat-free. JS syntax checked
+      with `node --check`.
+- [x] README "Frontend (demo)" section (start command, port, `/ui/` path).
 
 ## Phase 7 — MLOps (supporting)
 

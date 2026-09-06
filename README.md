@@ -173,3 +173,32 @@ are a general wellness estimate from the Mifflin-St Jeor equation, not
 clinical advice; the safety filter matches ingredient text + known tags and
 can miss allergens phrased unusually — anyone with a serious allergy must
 verify ingredients themselves.
+
+---
+
+## Frontend (demo)
+
+A single self-contained page, [`frontend/index.html`](frontend/index.html) —
+no build step. The Model Service serves it from the **same origin**, so just
+start the service and open the `/ui` path:
+
+```bash
+export FOOD_DB_DSN=postgresql://food_user:food_pass@localhost:5433/food_db
+.venv/Scripts/python -m uvicorn model_service.main:app --port 8899
+# then open:  http://localhost:8899/ui/
+```
+
+(If you prefer to serve it standalone — `python -m http.server -d frontend 5500`
+and put `http://localhost:8899` in the page's "Model Service base URL" box.)
+
+The form collects the profile (age, sex, weight, height, activity level, goal)
+and restrictions (allergy checkboxes: nut / shellfish / dairy / egg / soy /
+gluten / fish / sesame; diet dropdown: none / vegan / vegetarian /
+pescatarian / halal / kosher — matching the values the service actually
+accepts), calls `POST /recommend` for real, and shows the `daily_target`, the
+recommendation cards, the **`excluded_count`** ("N menu items filtered out
+because of your restrictions"), the `model_version` (with a
+"clusters still under development — exploratory, not clinical" badge when it
+is `-provisional`), and the medical disclaimer permanently at the bottom. An
+empty `recommendations[]` shows a plain "no items match" message rather than
+an error.
