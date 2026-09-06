@@ -252,6 +252,113 @@ def test_gate_dedupes_overlapping_menu_ids(tmp_path):
     assert "80 rows" in str(ei.value)  # 80 unique, not 160
 
 
+# ------------------------------------------- Phase 7: retrain trigger + tracking
+def _capture_mlflow(monkeypatch):
+    seen = {}
+
+    def fake_log(*, model_version, params, metrics, tags=None, fallback_dir=None):
+        seen["params"] = dict(params)
+        seen["metrics"] = dict(metrics)
+        seen["tags"] = dict(tags or {})
+        return {"backend": "mlflow", "run_id": "cur-run"}
+
+    monkeypatch.setattr(dag_tasks.mlflow_tracking, "log_kmeans_run", fake_log)
+    return seen
+
+
+def test_catalog_row_count_logged_separately_from_gate_and_samples(tmp_path, monkeypatch):
+    seen = _capture_mlflow(monkeypatch)
+    rp = _ratios_file(tmp_path, 100)  # 100 new
+    out = dag_tasks.train_or_update_kmeans(
+        rp, run_dir=tmp_path, now_iso=NOW,
+        fetch_existing=_existing(100),          # gate sees 200
+        count_catalog=lambda: 999,             # menu_catalog total
+        latest_run_fn=lambda **kw: None,       # no prior run -> trains
+    )
+    p = seen["params"]
+    assert p["catalog_row_count"] == 999        # SELECT count(*) FROM menu_catalog
+    assert p["gate_row_count"] == 200           # rows the 150/500 gate saw
+    assert p["n_samples"] == 200                # rows actually fit
+    assert "silhouette" in seen["metrics"] and "inertia" in seen["metrics"]
+    assert seen["tags"]["gate_tier"] == "provisional"
+    assert "gate" not in seen["tags"]           # renamed, not duplicated
+    d = json.loads(Path(out).read_text())
+    assert d["catalog_row_count"] == 999 and d["gate_row_count"] == 200
+
+
+def test_retrain_trigger_skips_when_growth_below_20_percent(tmp_path, monkeypatch):
+    _capture_mlflow(monkeypatch)
+    rp = _ratios_file(tmp_path, 100)
+    with pytest.raises(dag_tasks.PipelineSkip) as ei:
+        dag_tasks.train_or_update_kmeans(
+            rp, run_dir=tmp_path, now_iso=NOW, fetch_existing=_existing(100),
+            count_catalog=lambda: 350,                       # +4.5% vs 335
+            latest_run_fn=lambda **kw: {"catalog_row_count": 335, "silhouette": 0.29},
+        )
+    assert "grew only 4.5%" in str(ei.value) and "threshold 20%" in str(ei.value)
+    skip = json.loads(Path(tmp_path / dag_tasks.FILE_SKIP).read_text())
+    assert skip["skip_gate"] == "retrain_trigger"
+    assert skip["catalog_row_count"] == 350
+    assert skip["last_trained_catalog_row_count"] == 335
+
+
+def test_retrain_trigger_trains_when_growth_at_least_20_percent(tmp_path, monkeypatch):
+    seen = _capture_mlflow(monkeypatch)
+    rp = _ratios_file(tmp_path, 100)
+    out = dag_tasks.train_or_update_kmeans(
+        rp, run_dir=tmp_path, now_iso=NOW, fetch_existing=_existing(100),
+        count_catalog=lambda: 500,                            # +49% vs 335
+        latest_run_fn=lambda **kw: {"catalog_row_count": 335, "silhouette": 0.29},
+    )
+    d = json.loads(Path(out).read_text())
+    assert d["model_version"].endswith("-provisional")
+    assert d["catalog_row_count"] == 500
+    assert seen["params"]["catalog_growth_fraction"] == pytest.approx((500 - 335) / 335)
+
+
+def test_retrain_trigger_trains_when_no_previous_run(tmp_path, monkeypatch):
+    _capture_mlflow(monkeypatch)
+    rp = _ratios_file(tmp_path, 200)
+    out = dag_tasks.train_or_update_kmeans(
+        rp, run_dir=tmp_path, now_iso=NOW, fetch_existing=lambda: [],
+        count_catalog=lambda: 200, latest_run_fn=lambda **kw: None,
+    )
+    assert json.loads(Path(out).read_text())["model_version"]
+
+
+def test_cluster_quality_warning_on_silhouette_drop(tmp_path, monkeypatch, caplog):
+    _capture_mlflow(monkeypatch)
+    rp = _ratios_file(tmp_path, 200)
+
+    def latest_run(*, gate_tier=None, exclude_run_id=None):
+        if gate_tier is None:                      # the retrain-trigger lookup
+            return {"catalog_row_count": 100}       # big growth -> train
+        return {"silhouette": 0.95, "catalog_row_count": 100}  # prev same-tier: very high
+
+    with caplog.at_level("WARNING"):
+        out = dag_tasks.train_or_update_kmeans(
+            rp, run_dir=tmp_path, now_iso=NOW, fetch_existing=lambda: [],
+            count_catalog=lambda: 200, latest_run_fn=latest_run,
+        )
+    assert "cluster quality may have degraded" in caplog.text
+    d = json.loads(Path(out).read_text())
+    assert d["cluster_quality"]["degraded"] is True
+
+
+def test_min_catalog_gate_still_wins_over_retrain_trigger(tmp_path, monkeypatch):
+    _capture_mlflow(monkeypatch)
+    rp = _ratios_file(tmp_path, 20)
+    with pytest.raises(dag_tasks.PipelineSkip) as ei:
+        dag_tasks.train_or_update_kmeans(
+            rp, run_dir=tmp_path, now_iso=NOW, fetch_existing=_existing(50),  # 70 < 150
+            count_catalog=lambda: 70,
+            latest_run_fn=lambda **kw: {"catalog_row_count": 10},  # huge growth
+        )
+    assert "minimum 150" in str(ei.value)
+    skip = json.loads(Path(tmp_path / dag_tasks.FILE_SKIP).read_text())
+    assert skip["skip_gate"] == "min_catalog_size"
+
+
 # ------------------------------------------- assign + write
 def test_assign_then_write_attaches_cluster(tmp_path):
     rp = _ratios_file(tmp_path, 160)

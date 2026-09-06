@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from . import catalog_repo, clustering, mlflow_tracking
+from . import catalog_repo, clustering, mlflow_tracking, retrain_policy
 from .compute_recipe_nutrition import (
     NUTRITION_SOURCE_SPOONACULAR,
     NUTRITION_SOURCE_USDA,
@@ -334,13 +334,20 @@ def train_or_update_kmeans(
     now_iso: str,
     kmeans_config: clustering.KMeansConfig | None = None,
     fetch_existing: Callable[[], list[dict[str, Any]]] | None = None,
+    count_catalog: Callable[[], int] | None = None,
+    latest_run_fn: Callable[..., dict[str, Any] | None] | None = None,
+    min_growth_fraction: float = retrain_policy.RETRAIN_MIN_GROWTH_FRACTION,
 ) -> str:
-    """Gate on total catalog size, then (if allowed) fit K-Means. This is the
-    ONLY place K-Means is trained.
+    """Two gates, then fit K-Means. This is the ONLY place K-Means is trained.
 
-      * < 150 rows -> raise PipelineSkip (skips this task AND assign)
-      * 150-499    -> train, model_version marked provisional
-      * >= 500     -> train, stable
+      gate 1 (Phase 3, unchanged): catalog rows for the fit
+          < 150  -> PipelineSkip ; 150-499 -> provisional ; >= 500 -> stable
+      gate 2 (Phase 7, added alongside gate 1): retrain trigger
+          catalog grew < ``min_growth_fraction`` (default 20%) since the last
+          logged train -> PipelineSkip
+
+    After the fit, a cluster-quality check compares this run's silhouette with
+    the previous same-``gate_tier`` run and logs a WARNING if it dropped.
     """
     payload = _read_json(in_path)
     new_rows = payload["rows"]
@@ -356,52 +363,111 @@ def train_or_update_kmeans(
     for r in new_rows:
         merged[r["menu_id"]] = r
     training_rows = list(merged.values())
-    row_count = len(training_rows)
-    gate = clustering.catalog_size_gate(row_count)
+    gate_row_count = len(training_rows)  # what the 150/500 gate sees
+    gate = clustering.catalog_size_gate(gate_row_count)
 
+    # ---- gate 1: minimum catalog size (Phase 3 — unchanged) ----
     if gate == clustering.GATE_SKIP:
         msg = (
-            f"catalog has {row_count} rows, minimum {clustering.MIN_CATALOG_SIZE} "
+            f"catalog has {gate_row_count} rows, minimum {clustering.MIN_CATALOG_SIZE} "
             f"required to train K-Means — skipping train_or_update_kmeans and "
             f"assign_cluster_labels this run"
         )
         logger.warning("train_or_update_kmeans: %s", msg)
         skip_path = _write_json(
             _run_path(run_dir, FILE_SKIP),
-            {"gate": gate, "row_count": row_count, "reason": msg},
+            {"skip_gate": "min_catalog_size", "gate_tier": gate, "gate": gate,
+             "gate_row_count": gate_row_count, "row_count": gate_row_count,
+             "reason": msg},
         )
         raise PipelineSkip(msg, detail_path=skip_path)
 
+    # total rows in menu_catalog right now (may exceed gate_row_count — some
+    # rows can lack usable cluster features). Logged separately.
+    count_catalog = count_catalog or catalog_repo.count_menu_catalog
+    try:
+        catalog_row_count = int(count_catalog())
+    except Exception as exc:
+        logger.warning("train_or_update_kmeans: count_menu_catalog failed (%s) — using gate_row_count", exc)
+        catalog_row_count = gate_row_count
+
+    # ---- gate 2: retrain trigger (Phase 7 — alongside gate 1) ----
+    latest_run_fn = latest_run_fn or mlflow_tracking.latest_run_summary
+    prev_run = latest_run_fn()
+    decision = retrain_policy.evaluate_retrain(
+        catalog_row_count,
+        prev_run.get("catalog_row_count") if prev_run else None,
+        min_growth_fraction=min_growth_fraction,
+    )
+    if not decision.should_retrain:
+        logger.warning("train_or_update_kmeans: %s", decision.reason)
+        skip_path = _write_json(
+            _run_path(run_dir, FILE_SKIP),
+            {"skip_gate": "retrain_trigger", "gate_tier": gate,
+             "catalog_row_count": catalog_row_count,
+             "last_trained_catalog_row_count": prev_run.get("catalog_row_count") if prev_run else None,
+             "growth_fraction": decision.growth_fraction, "reason": decision.reason},
+        )
+        raise PipelineSkip(decision.reason, detail_path=skip_path)
+    logger.info("train_or_update_kmeans: retrain trigger -> %s", decision.reason)
+
     matrix = [[float(r[c]) for c in FEATURE_COLUMNS] for r in training_rows]
     trained = clustering.train_kmeans(
-        matrix, row_count=row_count, now_iso=now_iso, config=kmeans_config
+        matrix, row_count=gate_row_count, now_iso=now_iso, config=kmeans_config
     )
 
     model_path = _run_path(run_dir, FILE_MODEL_PKL)
     with open(model_path, "wb") as fh:
         pickle.dump(trained._pipeline, fh)
 
+    # augment the params so MLflow carries all three counts unambiguously
+    logged_params = dict(trained.params)
+    logged_params["gate_row_count"] = logged_params.pop("catalog_row_count", gate_row_count)
+    logged_params["catalog_row_count"] = catalog_row_count  # SELECT count(*) FROM menu_catalog
+    logged_params["catalog_growth_fraction"] = decision.growth_fraction
+
     tracking = mlflow_tracking.log_kmeans_run(
         model_version=trained.model_version,
-        params=trained.params,
+        params=logged_params,
         metrics=trained.metrics,
-        tags={"gate": gate, "provisional": trained.provisional},
+        tags={"gate_tier": gate, "provisional": trained.provisional},
         fallback_dir=Path(run_dir) / "models",
     )
+
+    # ---- cluster-quality check vs. the previous same-tier run ----
+    prev_tier_run = latest_run_fn(
+        gate_tier=gate, exclude_run_id=tracking.get("run_id")
+    )
+    quality = retrain_policy.check_cluster_quality(
+        trained.metrics.get("silhouette"),
+        prev_tier_run.get("silhouette") if prev_tier_run else None,
+    )
+    if quality.degraded:
+        logger.warning("train_or_update_kmeans: %s", quality.message)
+    else:
+        logger.info("train_or_update_kmeans: cluster quality — %s", quality.message)
+
     logger.info(
-        "train_or_update_kmeans: gate=%s row_count=%d model_version=%s tracking=%s",
-        gate, row_count, trained.model_version, tracking,
+        "train_or_update_kmeans: gate_tier=%s gate_rows=%d catalog_rows=%d "
+        "model_version=%s tracking=%s",
+        gate, gate_row_count, catalog_row_count, trained.model_version, tracking,
     )
     return _write_json(
         _run_path(run_dir, FILE_MODEL_JSON),
         {
             "gate": gate,
-            "row_count": row_count,
+            "gate_tier": gate,
+            "gate_row_count": gate_row_count,
+            "catalog_row_count": catalog_row_count,
+            "row_count": gate_row_count,  # kept for back-compat with assign/write
             "model_version": trained.model_version,
             "provisional": trained.provisional,
             "model_path": str(model_path),
-            "params": trained.params,
+            "params": logged_params,
             "metrics": trained.metrics,
+            "cluster_quality": {
+                "degraded": quality.degraded, "message": quality.message,
+            },
             "tracking": tracking,
         },
     )

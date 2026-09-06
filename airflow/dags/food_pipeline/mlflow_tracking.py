@@ -1,11 +1,10 @@
-"""Track a K-Means training run's params / metrics / tags (Phase 3).
+"""Track a K-Means training run's params / metrics / tags, and read back the
+last run for the Phase 7 retrain trigger + cluster-quality check.
 
 Prefers MLflow (backend store = ``mlflow_db``, per the project's Postgres-only
-rule). If MLflow isn't installed or no tracking URI is configured, falls back
-to a JSON record on disk + a log line so the DAG still runs.
-
-TODO(Phase 7): wire the full MLflow setup — model registry, run comparison as
-the catalog grows, retrain triggers. This module is the minimal hook.
+rule). If MLflow isn't installed or no tracking URI is configured, logging
+falls back to a JSON record on disk and history reads return ``None``
+(the caller then treats it as "no prior run").
 """
 
 from __future__ import annotations
@@ -71,6 +70,63 @@ def log_kmeans_run(
     path.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
     logger.info("mlflow fallback: wrote %s", path)
     return {"backend": "fallback", "path": str(path)}
+
+
+def latest_run_summary(
+    *, gate_tier: str | None = None, exclude_run_id: str | None = None
+) -> dict[str, Any] | None:
+    """Most recent K-Means run from MLflow (optionally filtered to a
+    ``gate_tier`` tag, optionally skipping ``exclude_run_id``). Returns
+    ``{run_id, catalog_row_count, n_samples, silhouette, gate_tier,
+    start_time}`` or ``None`` when MLflow is unavailable / has no matching run.
+
+    Used by the Phase 7 retrain trigger (compare ``catalog_row_count``) and
+    the cluster-quality check (compare ``silhouette`` to the last same-tier
+    run)."""
+    uri = _tracking_uri()
+    if not uri:
+        return None
+    try:
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient(tracking_uri=uri)
+        exp = client.get_experiment_by_name(
+            os.environ.get("MLFLOW_EXPERIMENT", _DEFAULT_EXPERIMENT)
+        )
+        if exp is None:
+            return None
+        filt = f"tags.gate_tier = '{gate_tier}'" if gate_tier else ""
+        runs = client.search_runs(
+            [exp.experiment_id],
+            filter_string=filt,
+            order_by=["attributes.start_time DESC"],
+            max_results=10,
+        )
+        for r in runs:
+            if exclude_run_id and r.info.run_id == exclude_run_id:
+                continue
+            if r.info.lifecycle_stage != "active":
+                continue
+            p, m, t = r.data.params, r.data.metrics, r.data.tags
+            return {
+                "run_id": r.info.run_id,
+                "catalog_row_count": _int_or_none(p.get("catalog_row_count")),
+                "n_samples": _int_or_none(p.get("n_samples")),
+                "silhouette": m.get("silhouette"),
+                "gate_tier": t.get("gate_tier"),
+                "start_time": r.info.start_time,
+            }
+        return None
+    except Exception as exc:  # history is best-effort, never break the DAG
+        logger.warning("mlflow: could not read run history (%s)", exc)
+        return None
+
+
+def _int_or_none(v: Any) -> int | None:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_number(v: Any) -> bool:

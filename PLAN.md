@@ -387,9 +387,43 @@ complete with all unit tests passing.**
 
 ## Phase 7 — MLOps (supporting)
 
-- [ ] MLflow (backend store `mlflow_db`) tracks each K-Means version: params
-      (k, features, seed), metrics (inertia, silhouette), catalog size at train
-      time
-- [ ] Cluster-quality check as the catalog grows; periodic retrain trigger in
-      Airflow with rationale documented (slow catalog growth due to quota)
-- [ ] No `mlruns/` directory — confirm MLflow uses Postgres only
+- [x] MLflow (backend store `mlflow_db`, Postgres) tracks each K-Means run —
+      **params**: `k`/`requested_k`, `seed`, `n_init`, `max_iter`,
+      `standardize`, `features`, `n_samples` (rows fit), `gate_row_count`
+      (what the 150/500 gate saw), **`catalog_row_count`** (`SELECT count(*)
+      FROM menu_catalog` at train time — logged distinctly from the other two,
+      verified in a unit test), `catalog_growth_fraction`, `gate`;
+      **metrics**: `inertia` + `silhouette` (verified still logged every run);
+      **tags**: `gate_tier` (`skip`/`provisional`/`stable` — renamed from the
+      Phase 3 `gate` tag, not duplicated), `provisional`, `model_version`.
+      `mlflow_tracking.latest_run_summary()` reads the last run back.
+- [x] Cluster-quality check (`retrain_policy.check_cluster_quality`): after a
+      fit, compares this run's `silhouette` with the previous same-`gate_tier`
+      run from MLflow; drop > 0.05 absolute → WARNING log naming likely causes
+      (catalog composition changed / k no longer suited). Advisory only, no
+      auto-fix. Skipped when no comparable prior run.
+- [x] Periodic retrain trigger (`retrain_policy.evaluate_retrain`), a **second
+      gate alongside** the unchanged 150/500 gate: catalog grew
+      < `RETRAIN_MIN_GROWTH_FRACTION` (0.20) since the last logged
+      `catalog_row_count` → `PipelineSkip`
+      (`"catalog grew only X% since last train (… threshold 20%), skipping
+      retrain this run"`, `skip_gate="retrain_trigger"` in `05_skip.json`). No
+      prior run → train. Rationale for 20% documented in
+      `docs/phase7-mlops.md` (slow catalog growth from the ~50 pts/day
+      Spoonacular quota; re-fitting for 2-3 rows churns `cluster_id` for no
+      gain).
+- [x] **Demonstrated live**: DAG triggered at catalog = 335 (quota exhausted,
+      extract pulled 0) → `train_or_update_kmeans` + `assign_cluster_labels`
+      **skipped** via the retrain trigger (`growth 0.0% < 20%`), not the
+      min-150 gate; `write_to_menu_catalog` still succeeded.
+- [x] No `mlruns/` directory and no `*.parquet` anywhere in the repo/working
+      tree (grep + `find` verified); `.gitignore` still guards both; MLflow
+      server runs with `--backend-store-uri postgresql+psycopg2://…/mlflow_db`
+      and `mlflow_db.runs` holds the rows. Model pickles live in the
+      `mlflow_artifacts` Docker volume (artifact store, not a file tracking
+      store, not in the repo).
+- [x] Tests: **+18** (283 total, 1 skipped) — `test_retrain_policy.py` (12)
+      + `test_dag_tasks.py` (+7 incl. the retrain trigger skip/train paths,
+      `catalog_row_count` param, `gate_tier` tag, cluster-quality WARNING,
+      min-catalog gate still winning). Full suite green.
+- [x] `docs/phase7-mlops.md`.
