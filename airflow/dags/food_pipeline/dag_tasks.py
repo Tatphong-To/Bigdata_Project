@@ -184,7 +184,8 @@ def extract_menus(
             rows.append(r)
         counts["spoonacular"] = len(run.accepted)
         logger.info(
-            "extract_menus: spoonacular -> %d rows (points %.2f->%.2f, stopped_early=%s)",
+            "extract_menus: ดึงเมนูจาก Spoonacular เสร็จ — "
+            "spoonacular -> %d rows (points %.2f->%.2f, stopped_early=%s)",
             len(run.accepted), run.points_used_before, run.points_used_after,
             run.stopped_early,
         )
@@ -200,7 +201,10 @@ def extract_menus(
             try:
                 meals = mealdb.parsed_search(q)
             except Exception as exc:
-                logger.warning("extract_menus: themealdb search %r failed: %s", q, exc)
+                logger.warning(
+                    "extract_menus: ค้นหา TheMealDB ด้วยคำว่า %r ล้มเหลว — "
+                    "themealdb search failed: %s", q, exc,
+                )
                 continue
             for meal in meals[:themealdb_recipes_per_query]:
                 if meal.meal_id in seen:
@@ -214,7 +218,8 @@ def extract_menus(
                     )
                 except Exception as exc:
                     logger.warning(
-                        "extract_menus: nutrition for meal %s failed: %s",
+                        "extract_menus: ประเมินโภชนาการของเมนู %s ไม่สำเร็จ — "
+                        "nutrition for meal failed: %s",
                         meal.meal_id, exc,
                     )
                     continue
@@ -224,12 +229,18 @@ def extract_menus(
                 rows.append(_recipe_nutrition_to_row(rn, meal, assumed_servings))
         counts["themealdb_usda"] = len(rows) - counts["spoonacular"]
         logger.info(
-            "extract_menus: themealdb->usda -> %d kept, %d dropped for completeness",
+            "extract_menus: TheMealDB->USDA — เก็บได้ %d เมนู, ตัดทิ้ง %d เมนู "
+            "(completeness ต่ำ) — themealdb->usda -> %d kept, %d dropped for completeness",
+            counts["themealdb_usda"], counts["themealdb_dropped"],
             counts["themealdb_usda"], counts["themealdb_dropped"],
         )
 
     out = _run_path(run_dir, FILE_EXTRACTED)
-    logger.info("extract_menus: %d candidate rows total %s", len(rows), counts)
+    logger.info(
+        "extract_menus: รวมเมนูผู้สมัครทั้งหมด %d รายการ — "
+        "%d candidate rows total %s",
+        len(rows), len(rows), counts,
+    )
     return _write_json(out, {"rows": rows, "counts": counts})
 
 
@@ -245,7 +256,9 @@ def validate_nutrition_data(in_path: str | Path, *, run_dir: str | Path) -> str:
         [{"menu_id": r.menu_id, "name": r.name, "reasons": list(r.reasons)} for r in rejected],
     )
     logger.info(
-        "validate_nutrition_data: %d accepted, %d rejected", len(accepted), len(rejected)
+        "validate_nutrition_data: ตรวจข้อมูลโภชนาการ — ผ่าน %d แถว, ปฏิเสธ %d แถว "
+        "— %d accepted, %d rejected",
+        len(accepted), len(rejected), len(accepted), len(rejected),
     )
     return _write_json(_run_path(run_dir, FILE_VALIDATED), {"rows": accepted})
 
@@ -284,7 +297,11 @@ def clean(in_path: str | Path, *, run_dir: str | Path) -> str:
             continue
         seen.add(mid)
         cleaned.append(row)
-    logger.info("clean: %d rows kept, %d dropped", len(cleaned), dropped)
+    logger.info(
+        "clean: ทำความสะอาดข้อมูล — เก็บ %d แถว, ตัดทิ้ง %d แถว "
+        "— %d rows kept, %d dropped",
+        len(cleaned), dropped, len(cleaned), dropped,
+    )
     return _write_json(_run_path(run_dir, FILE_CLEANED), {"rows": cleaned})
 
 
@@ -305,8 +322,9 @@ def compute_nutrition_ratios(in_path: str | Path, *, run_dir: str | Path) -> str
             continue
         out_rows.append({**row, **{c: f[c] for c in FEATURE_COLUMNS}})
     logger.info(
-        "compute_nutrition_ratios: %d rows with features, %d dropped",
-        len(out_rows), len(dropped),
+        "compute_nutrition_ratios: คำนวณสัดส่วนโภชนาการ (Layer B features) — "
+        "ได้ feature %d แถว, ตัดทิ้ง %d แถว — %d rows with features, %d dropped",
+        len(out_rows), len(dropped), len(out_rows), len(dropped),
     )
     return _write_json(
         _run_path(run_dir, FILE_RATIOS),
@@ -356,7 +374,11 @@ def train_or_update_kmeans(
     try:
         existing = fetch_existing()
     except Exception as exc:
-        logger.warning("train_or_update_kmeans: could not read existing catalog features (%s) — using this run only", exc)
+        logger.warning(
+            "train_or_update_kmeans: อ่าน feature เดิมจาก menu_catalog ไม่ได้ "
+            "จะใช้เฉพาะข้อมูลรอบนี้ — could not read existing catalog features (%s) "
+            "— using this run only", exc,
+        )
         existing = []
 
     merged: dict[str, dict[str, Any]] = {r["menu_id"]: r for r in existing}
@@ -373,7 +395,10 @@ def train_or_update_kmeans(
             f"required to train K-Means — skipping train_or_update_kmeans and "
             f"assign_cluster_labels this run"
         )
-        logger.warning("train_or_update_kmeans: %s", msg)
+        logger.warning(
+            "train_or_update_kmeans: ข้าม — catalog เล็กเกินกว่าจะเทรน K-Means "
+            "(gate ขั้นต่ำ 150 แถว) — %s", msg,
+        )
         skip_path = _write_json(
             _run_path(run_dir, FILE_SKIP),
             {"skip_gate": "min_catalog_size", "gate_tier": gate, "gate": gate,
@@ -388,7 +413,11 @@ def train_or_update_kmeans(
     try:
         catalog_row_count = int(count_catalog())
     except Exception as exc:
-        logger.warning("train_or_update_kmeans: count_menu_catalog failed (%s) — using gate_row_count", exc)
+        logger.warning(
+            "train_or_update_kmeans: นับจำนวนแถวใน menu_catalog ไม่สำเร็จ "
+            "จะใช้ค่า gate_row_count แทน — count_menu_catalog failed (%s) "
+            "— using gate_row_count", exc,
+        )
         catalog_row_count = gate_row_count
 
     # ---- gate 2: retrain trigger (Phase 7 — alongside gate 1) ----
@@ -400,7 +429,10 @@ def train_or_update_kmeans(
         min_growth_fraction=min_growth_fraction,
     )
     if not decision.should_retrain:
-        logger.warning("train_or_update_kmeans: %s", decision.reason)
+        logger.warning(
+            "train_or_update_kmeans: ข้าม — catalog ยังโตไม่ถึงเกณฑ์ retrain "
+            "(ต้องโต >= 20%% จากรอบเทรนล่าสุด) — %s", decision.reason,
+        )
         skip_path = _write_json(
             _run_path(run_dir, FILE_SKIP),
             {"skip_gate": "retrain_trigger", "gate_tier": gate,
@@ -409,7 +441,10 @@ def train_or_update_kmeans(
              "growth_fraction": decision.growth_fraction, "reason": decision.reason},
         )
         raise PipelineSkip(decision.reason, detail_path=skip_path)
-    logger.info("train_or_update_kmeans: retrain trigger -> %s", decision.reason)
+    logger.info(
+        "train_or_update_kmeans: ผ่านเกณฑ์ retrain จะเทรน K-Means ใหม่ "
+        "— retrain trigger -> %s", decision.reason,
+    )
 
     matrix = [[float(r[c]) for c in FEATURE_COLUMNS] for r in training_rows]
     trained = clustering.train_kmeans(
@@ -443,13 +478,19 @@ def train_or_update_kmeans(
         prev_tier_run.get("silhouette") if prev_tier_run else None,
     )
     if quality.degraded:
-        logger.warning("train_or_update_kmeans: %s", quality.message)
+        logger.warning(
+            "train_or_update_kmeans: เตือน — คุณภาพ cluster อาจแย่ลง — %s",
+            quality.message,
+        )
     else:
-        logger.info("train_or_update_kmeans: cluster quality — %s", quality.message)
+        logger.info(
+            "train_or_update_kmeans: คุณภาพ cluster ปกติ — cluster quality — %s",
+            quality.message,
+        )
 
     logger.info(
-        "train_or_update_kmeans: gate_tier=%s gate_rows=%d catalog_rows=%d "
-        "model_version=%s tracking=%s",
+        "train_or_update_kmeans: เทรน K-Means เสร็จ — gate_tier=%s gate_rows=%d "
+        "catalog_rows=%d model_version=%s tracking=%s",
         gate, gate_row_count, catalog_row_count, trained.model_version, tracking,
     )
     return _write_json(
@@ -499,8 +540,9 @@ def assign_cluster_labels(
         labels = []
     assignments = {row["menu_id"]: lab for row, lab in zip(rows, labels)}
     logger.info(
-        "assign_cluster_labels: assigned %d rows with %s",
-        len(assignments), descriptor["model_version"],
+        "assign_cluster_labels: กำหนด cluster_id ให้ %d เมนู ด้วยโมเดล %s "
+        "— assigned %d rows",
+        len(assignments), descriptor["model_version"], len(assignments),
     )
     return _write_json(
         _run_path(run_dir, FILE_ASSIGNMENTS),
@@ -557,5 +599,8 @@ def write_to_menu_catalog(
         "model_provisional": provisional,
         "clustering_ran": bool(assignments),
     }
-    logger.info("write_to_menu_catalog: %s", summary)
+    logger.info(
+        "write_to_menu_catalog: เขียนผลลง Postgres (menu_catalog) เสร็จ — %s",
+        summary,
+    )
     return _write_json(_run_path(run_dir, FILE_WRITE_SUMMARY), summary)

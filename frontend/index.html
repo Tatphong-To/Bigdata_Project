@@ -431,7 +431,7 @@
       } catch (err) {
         $("formErr").textContent = String(err.message || err);
       } finally {
-        btn.disabled = false; btn.textContent = "Get recommendations";
+        btn.disabled = false; btn.textContent = "รับคำแนะนำ";
       }
     });
 
@@ -441,7 +441,7 @@
 
       const t = data.daily_target;
       $("target").innerHTML = [
-        ["calories", t.calories], ["protein g", t.protein_g],
+        ["แคลอรี", t.calories], ["โปรตีน กรัม", t.protein_g],
         ["carbs g", t.carbs_g], ["fat g", t.fat_g],
       ].map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join("");
 
@@ -455,14 +455,14 @@
       const provisional = mv.toLowerCase().includes("provisional");
       $("model").innerHTML = "Model version: <code>" + escapeHtml(mv) + "</code>" +
         (provisional
-          ? '<span class="badge">clusters still under development — exploratory, not clinical</span>'
+          ? '<span class="badge">เป็นการศึกษาเชิงสำรวจ ไม่ใช่การศึกษาทางคลินิก</span>'
           : "");
 
       const recs = data.recommendations || [];
       if (recs.length === 0) {
         $("recsWrap").innerHTML =
-          '<div class="empty">No menu items match this profile and restriction set. ' +
-          "Try loosening a restriction or a different goal.</div>";
+          '<div class="empty">ไม่มีรายการเมนูที่ตรงกับโปรไฟล์และชุดข้อจำกัดนี้' +
+          "ลองผ่อนปรนข้อจำกัดหรือเปลี่ยนไปตั้งเป้าหมายอื่นดู</div>";
       } else {
         $("recsWrap").innerHTML = '<div class="recs">' + recs.map((r) => {
           const nu = r.nutrition || {};
