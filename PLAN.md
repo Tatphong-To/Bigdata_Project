@@ -299,19 +299,55 @@ complete with all unit tests passing.**
 
 ## Phase 5 — FastAPI model service  *(only after Phase 4 done + tests green)*
 
-- [ ] `POST /recommend` request model: profile (age, sex, weight, height,
-      activity level, goal) + restrictions (allergies, diet type)
-- [ ] Pipeline in fixed order: safety filter (Phase 4) → Layer A calculator
-      (Mifflin-St Jeor + activity multiplier + goal adjustment, constants from
-      the `food-rec-domain` skill) → read precomputed `cluster_id` → Layer C
-      deterministic ranking by distance to target
-- [ ] Response always includes `daily_target`, `recommendations[]` (menu_id,
-      name, match_score, nutrition), `excluded_count`, `model_version`
-- [ ] Every request writes to `prediction_log`
-- [ ] Service only **reads** `cluster_id` — no K-Means anywhere in the handler
-- [ ] Tests: calculator values vs hand-computed, contract shape, safety filter
-      actually invoked (excluded_count present even with no restrictions)
-- [ ] Endpoint responses / docs carry the medical disclaimer
+- [x] `model_service/` FastAPI app. `POST /recommend` request model:
+      `profile` (age, sex, weight_kg, height_cm, activity_level, goal) +
+      `restrictions` (allergies list, diet_type) + `max_results`. Pydantic
+      `Literal` validation (422 on bad input). `/health` too.
+- [x] Fixed pipeline order in `model_service/pipeline.py`: safety filter
+      (`food_pipeline.safety_filter`, always runs) → Layer A calculator
+      (`model_service/calculator.py` — Mifflin-St Jeor + activity multiplier +
+      goal adjustment, constants **verbatim from the food-rec-domain skill**;
+      deficit capped at 20% of TDEE, gain +400, macro split 30/40/30 @ 4/4/9)
+      → read precomputed `cluster_id` + per-cluster mean macros (`AVG` query,
+      no ML) → Layer C deterministic ranking (`model_service/ranking.py` —
+      normalised distance to `daily_target / 3`, item term + cluster term,
+      ties broken by `menu_id`).
+- [x] Response: `daily_target {calories,protein_g,carbs_g,fat_g}`,
+      `recommendations[] {menu_id,name,match_score,nutrition{...}}`,
+      `excluded_count` (from the real safety filter), `model_version` (carries
+      `-provisional` from `menu_catalog.model_provisional`), plus a
+      `disclaimer` string on every response.
+- [x] Every request writes one anonymous row to `prediction_log`
+      (age/sex/weight/height/activity/goal/allergies/diet + targets +
+      recommended ids + excluded_count + model_version; no name/email/IP).
+      Verified: 8 rows written during live testing.
+- [x] Service **only reads** `cluster_id`. `model_service/` imports nothing
+      from `food_pipeline.clustering` / `dag_tasks` / `features` and no
+      `sklearn`/`numpy`/`pandas` — an AST test
+      (`test_model_service_no_ml.py`) enforces it; only `safety_filter` and
+      `db` are pulled from `food_pipeline`.
+- [x] `cluster_id IS NULL` rows are **not dropped, not errored**: the ranker
+      scores them by item distance + a fixed penalty (`used_cluster_fallback`,
+      counted + logged). Tested.
+- [x] Recipe **name** is fed to the safety filter alongside the ingredient
+      list, so "Cheesy Beef Burrito" is caught for `vegetarian` even though
+      its ingredient is written "stew meat" (Phase 4 filter logic untouched —
+      it just gets more text). Verified live: vegetarian `excluded_count`
+      196 → 202, recommendations meat-free.
+- [x] Tests: **35 new** (265 total, 1 skipped) — `test_calculator.py` (14,
+      hand-computed BMR/TDEE/goal/macros for M/F × activity × goal, deficit
+      cap), `test_ranking.py` (9, determinism, cluster influence, null-cluster
+      fallback), `test_recommend_api.py` (12, contract shape, safety filter
+      runs with empty restrictions → `excluded_count == 0`, runs with
+      restrictions → `excluded_count > 0`, prediction_log write, no-cluster
+      edge case, `model_version` provisional), `test_model_service_no_ml.py`.
+- [x] Medical disclaimer: on every response (`disclaimer` field), in the
+      OpenAPI app + endpoint descriptions, and in the README endpoint section.
+- [x] **Live-verified** against the real 335-row catalog (231 clustered):
+      *male 30/moderate/maintain, no restrictions* → 2759 kcal, excluded 0;
+      *female 28/active/lose, peanut+shellfish* → 1889 kcal (deficit capped),
+      excluded 86, no shrimp/peanut in recs; *male 45/sedentary/gain,
+      vegetarian* → 2312 kcal, excluded 202, all-meatless recs.
 
 ## Phase 6 — Frontend
 

@@ -12,8 +12,9 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DAGS_DIR = _REPO_ROOT / "airflow" / "dags"
-if str(_DAGS_DIR) not in sys.path:
-    sys.path.insert(0, str(_DAGS_DIR))
+for _p in (_DAGS_DIR, _REPO_ROOT):  # food_pipeline.* and model_service.*
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 

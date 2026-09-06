@@ -120,3 +120,56 @@ docker compose up -d          # postgres + airflow (8080) + mlflow (5000)
 [`infra/postgres/food_db_schema.sql`](infra/postgres/food_db_schema.sql).
 
 See [`PLAN.md`](PLAN.md) for the phased build plan and current progress.
+
+---
+
+## Model Service — `POST /recommend`
+
+FastAPI app in [`model_service/`](model_service/). Reads the catalog that the
+Airflow pipeline built; it never trains anything.
+
+```bash
+# needs food_db reachable — set one of these:
+export FOOD_DB_DSN=postgresql://food_user:food_pass@localhost:5433/food_db
+.venv/Scripts/python -m uvicorn model_service.main:app --port 8899
+# or: fastapi run model_service/main.py
+```
+
+Docs at `http://localhost:8899/docs`. Every request runs this **fixed order**
+(never reordered / merged / skipped):
+
+1. **Safety filter** (rule-based, always runs — even with no restrictions).
+2. **Layer A** — Mifflin-St Jeor daily energy + macro target.
+3. **Read** the precomputed `cluster_id` from `menu_catalog` (no K-Means here).
+4. **Layer C** — deterministic distance ranking to `daily_target / 3`.
+
+Request:
+
+```jsonc
+{
+  "profile": {"age": 30, "sex": "male", "weight_kg": 80, "height_cm": 180,
+              "activity_level": "moderate", "goal": "maintain"},
+  "restrictions": {"allergies": ["peanut", "shellfish"], "diet_type": "vegetarian"},
+  "max_results": 10
+}
+```
+`sex`: `male` | `female` (the Mifflin-St Jeor equation has two forms).
+`activity_level`: `sedentary` | `light` | `moderate` | `active` | `very_active`.
+`goal`: `lose` | `maintain` | `gain`.
+
+Response always includes `daily_target`, `recommendations[]` (`menu_id`,
+`name`, `match_score`, `nutrition`), `excluded_count` (how many the safety
+filter removed — always present), `model_version` (ends in `-provisional`
+while the catalog is in the 150–499 row band), and a `disclaimer`.
+
+Every call writes one **anonymous** row to `prediction_log` (age / weight /
+goal / restrictions / targets / recommended ids — no name, email, account, or
+IP). For system-quality monitoring only.
+
+### Not medical advice
+
+The `/recommend` response carries the disclaimer in full. The daily targets
+are a general wellness estimate from the Mifflin-St Jeor equation, not
+clinical advice; the safety filter matches ingredient text + known tags and
+can miss allergens phrased unusually — anyone with a serious allergy must
+verify ingredients themselves.
