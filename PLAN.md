@@ -1,3 +1,4 @@
+
 # PLAN.md — Personalized Food & Nutrition Recommendation System
 
 Working plan. Phases are done **in order**. A task is only checked off (`[x]`)
