@@ -80,8 +80,24 @@ def upsert_menu_rows(rows: Iterable[dict[str, Any]], *, connect_fn=connect) -> i
         return 0
     placeholders = ", ".join(["%s"] * len(_UPSERT_COLUMNS))
     col_list = ", ".join(_UPSERT_COLUMNS)
+    # The three clustering columns are only overwritten when the incoming row
+    # actually carries a cluster assignment. On a run where train +
+    # assign_cluster_labels were skipped (the common case with the Phase 7
+    # retrain trigger), extract still re-writes the same recipes with
+    # cluster_id = NULL — without this, that would blank out the cluster_id /
+    # model_version already stored from an earlier successful K-Means run.
+    _preserve_when_no_cluster = {
+        "cluster_id": "cluster_id = COALESCE(EXCLUDED.cluster_id, menu_catalog.cluster_id)",
+        "model_version": "model_version = COALESCE(EXCLUDED.model_version, menu_catalog.model_version)",
+        "model_provisional": (
+            "model_provisional = CASE WHEN EXCLUDED.cluster_id IS NULL "
+            "THEN menu_catalog.model_provisional ELSE EXCLUDED.model_provisional END"
+        ),
+    }
     updates = ", ".join(
-        f"{c} = EXCLUDED.{c}" for c in _UPSERT_COLUMNS if c != "menu_id"
+        _preserve_when_no_cluster.get(c, f"{c} = EXCLUDED.{c}")
+        for c in _UPSERT_COLUMNS
+        if c != "menu_id"
     )
     sql = (
         f"INSERT INTO menu_catalog ({col_list}, updated_at) "
