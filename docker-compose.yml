@@ -29,7 +29,8 @@ x-airflow-common: &airflow-common
     - ./airflow/dags:/opt/airflow/dags
     - ./model_service:/opt/airflow/model_service
     - ./data:/opt/airflow/data
-    - airflow_logs:/opt/airflow/logs
+    # task logs land in ./airflow/logs on the host (browsable; git-ignored)
+    - ./airflow/logs:/opt/airflow/logs
   depends_on:
     postgres:
       condition: service_healthy
@@ -128,5 +129,4 @@ services:
 
 volumes:
   postgres_data:
-  airflow_logs:
   mlflow_artifacts:
