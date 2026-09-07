@@ -65,7 +65,36 @@ FILE_SKIP = "05_skip.json"
 FILE_ASSIGNMENTS = "06_assignments.json"
 FILE_WRITE_SUMMARY = "07_write_summary.json"
 
+# Ordered so a run works through fresh terms first and only falls back to the
+# original twelve once budget still remains. The list is deliberately far
+# longer than any single day's Spoonacular budget can reach
+# (~50 points/day / ~2.2 points per number=20 search => ~23 searches max), so
+# the persisted QuotaTracker is the only thing that stops extraction — never
+# "ran out of queries". run_extraction already stops on QuotaExhaustedError.
 _DEFAULT_SPOONACULAR_QUERIES = (
+    # --- fresh terms (not used in any earlier extraction run) ---
+    # proteins
+    "turkey", "duck", "cod", "tuna", "tilapia", "tempeh", "halloumi",
+    "black beans", "edamame", "sardine", "mackerel", "prawn", "scallop",
+    # vegetables
+    "broccoli", "cauliflower", "spinach", "zucchini", "eggplant",
+    "brussels sprouts", "sweet potato", "cabbage", "asparagus", "pumpkin",
+    "bell pepper", "avocado", "beetroot", "green beans", "carrot",
+    # grains / carbs / legumes
+    "brown rice", "ramen", "couscous", "barley", "polenta", "gnocchi",
+    "baked potato", "farro", "kidney beans",
+    # cuisines
+    "thai food", "italian food", "mexican food", "indian food",
+    "japanese food", "greek food", "korean food", "mediterranean",
+    "moroccan", "vietnamese", "spanish food",
+    # dish types
+    "casserole", "skewers", "burrito", "panini", "burger", "taco", "pizza",
+    "risotto", "gumbo", "frittata", "kebab", "roast dinner", "dumplings",
+    "chowder", "chili", "meatloaf", "omelette",
+    # meal / diet framing
+    "high protein meal", "low carb dinner", "meal prep", "one pot",
+    "sheet pan dinner", "slow cooker",
+    # --- original twelve, kept as a fallback tail ---
     "chicken", "beef", "salmon", "tofu", "pasta", "salad", "rice bowl",
     "soup", "curry", "stir fry", "breakfast", "vegetarian",
 )
