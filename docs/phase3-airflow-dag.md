@@ -105,10 +105,35 @@ catalog grows, retrain triggers).
    quality will be lower than it looks. **Deferred follow-up:** cap the
    `usda_estimated` share, or gate on `spoonacular_computed` count alone, or
    down-weight `usda_estimated` rows in training. Tracked, not unnoticed.
-2. **`assign_cluster_labels` relabels only the current run's rows.** Rows
-   already in `menu_catalog` keep their previous `cluster_id` until they are
-   re-extracted. A full re-assign pass over the whole catalog after each
-   retrain is a follow-up.
+2. **`assign_cluster_labels` / `write_to_menu_catalog` only touch the rows
+   the run extracted — hit for real on 2026-09-07.** A manual trigger trained
+   successfully on 469 samples (`kmeans-20260907T043916+0000-provisional`,
+   silhouette 0.273, logged to MLflow) but that same run's `extract_menus`
+   pulled **0 new rows** (Spoonacular budget spent), so `04_ratios.json` was
+   empty, `assign_cluster_labels` produced 0 assignments, and **not one row
+   in `menu_catalog` got a `cluster_id`** despite the fit. Combined with the
+   COALESCE fix (which now stops skip runs from *blanking* `cluster_id`),
+   nothing writes the cluster after a train-with-no-extract.
+
+   **Remedy — `food_pipeline/reassign_all.py`.** `reassign_all(model_path,
+   model_version)` / `reassign_from_descriptor("…/05_model.json")` reads the
+   feature columns of **every** catalog row, `model.predict`s them, and
+   writes `cluster_id` / `model_version` / `model_provisional` for all of them
+   as a deliberate full overwrite (via `catalog_repo.update_cluster_labels`,
+   a plain `UPDATE` — not the COALESCE-guarded upsert). It does not retrain,
+   touch the gate / retrain-trigger, or recompute the ratio formula.
+
+   Run it after **every** successful `train_or_update_kmeans`, not just when
+   the run also extracted rows:
+
+   ```bash
+   FOOD_DB_DSN=postgresql://food_user:food_pass@localhost:5433/food_db \
+     python -m food_pipeline.reassign_all data/pipeline_runs/<run>/05_model.json
+   ```
+
+   It was run once on 2026-09-07 to recover the catalog: 0/469 → **469/469**
+   clustered, 6 clusters of 61–101 rows. Wiring it into the DAG as its own
+   task after `assign_cluster_labels` is a follow-up.
 3. **Assumed servings for `usda_estimated` rows.** TheMealDB has no servings
    count; `extract_menus` passes `DEFAULT_ASSUMED_SERVINGS = 4` so these rows
    have a `calories_per_serving` feature. `pct_calories_from_*` are
